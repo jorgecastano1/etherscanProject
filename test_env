@@ -1,0 +1,36 @@
+"""Quick test to check if .env file is being read correctly"""
+import os
+from dotenv import load_dotenv
+
+print("Current working directory:", os.getcwd())
+print("\n1. Before loading .env:")
+print(f"   ETHERSCAN_APIKEY = {os.getenv('ETHERSCAN_APIKEY')}")
+
+print("\n2. Loading .env file...")
+result = load_dotenv()
+print(f"   load_dotenv() returned: {result}")
+
+print("\n3. After loading .env:")
+api_key = os.getenv("ETHERSCAN_APIKEY")
+if api_key:
+    print(f"   ✅ API Key loaded successfully!")
+    print(f"   First 8 chars: {api_key[:8]}...")
+    print(f"   Total length: {len(api_key)} characters")
+else:
+    print("   ❌ API Key NOT found")
+
+print("\n4. Checking .env file:")
+if os.path.exists(".env"):
+    print("   ✅ .env file exists in current directory")
+    with open(".env", "r") as f:
+        lines = f.readlines()
+    print(f"   File has {len(lines)} line(s)")
+    for i, line in enumerate(lines, 1):
+        # Show line without revealing the actual key
+        if "ETHERSCAN_APIKEY" in line:
+            print(f"   Line {i}: ETHERSCAN_APIKEY is present ✅")
+        elif line.strip():
+            print(f"   Line {i}: {line.split('=')[0] if '=' in line else 'unknown format'}")
+else:
+    print("   ❌ .env file NOT found in current directory")
+    print(f"   Looking in: {os.getcwd()}")

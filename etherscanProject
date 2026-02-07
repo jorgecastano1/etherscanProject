@@ -1,0 +1,336 @@
+"""Ethereum Ecosystem Explorer - Learn by exploring real data"""
+import os
+import sys
+import json
+import time
+import requests
+from datetime import datetime
+from typing import Dict, List, Optional
+from dataclasses import dataclass
+from dotenv import load_dotenv
+import argparse
+
+# Load environment variables from .env file
+load_dotenv()
+
+BASE_URL = "https://api.etherscan.io/v2/api"
+API_KEY = os.getenv("ETHERSCAN_APIKEY")
+
+# Debug: Check if API key is loaded
+if not API_KEY:
+    print("⚠️  Warning: ETHERSCAN_APIKEY not found in .env file")
+    print("   Make sure your .env file contains: ETHERSCAN_APIKEY=your_key_here")
+    print("   Or set it via command line: --api-key YOUR_KEY")
+else:
+    print(f"✅ API Key loaded from .env (starts with: {API_KEY[:8]}...)")
+
+class EthereumExplorer:
+    """Interactive explorer for Ethereum data"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or API_KEY
+        
+        if not self.api_key:
+            print("⚠️  No API key provided. Using public API (rate limited to 1 request/5 sec)")
+            print("   Get a free key at: https://etherscan.io/apis")
+    
+    def _make_api_call(self, params: Dict) -> Optional[Dict]:
+        """Make API call to Etherscan with rate limiting"""
+        if self.api_key:
+            params["apikey"] = self.api_key
+            params["chainid"] = "1"
+        else:
+            print("      ⚠️ Using public API (slow mode)")
+            params["chainid"] = "1"
+        
+        try:
+            # Rate limiting: 0.2 sec for paid API, 5 sec for free
+            delay = 0.2 if self.api_key else 5.0
+            time.sleep(delay)
+            
+            response = requests.get(BASE_URL, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 403:
+                print("      ❌ API Error: Invalid or missing API key")
+                print("      Get a free key: https://etherscan.io/apis")
+            else:
+                print(f"      ❌ HTTP Error: {e}")
+            return None
+        except Exception as e:
+            print(f"      ❌ API Error: {e}")
+            return None
+    
+    def _get_token_balance(self, address: str, token_address: str) -> Optional[float]:
+        """Get token balance for an address"""
+        params = {
+            "module": "account",
+            "action": "tokenbalance",
+            "contractaddress": token_address,
+            "address": address,
+            "tag": "latest"
+        }
+        
+        data = self._make_api_call(params)
+        if data and data.get("status") == "1":
+            return int(data["result"]) / 1e18
+        return None
+    
+    def _get_transactions(self, address: str, limit: int = 10) -> List[Dict]:
+        """Get transactions for an address"""
+        params = {
+            "module": "account",
+            "action": "txlist",
+            "address": address,
+            "sort": "desc",
+            "page": 1,
+            "offset": limit
+        }
+        
+        data = self._make_api_call(params)
+        if data and data.get("status") == "1":
+            return data["result"]
+        return []
+    
+    def start_interactive_mode(self):
+        """Main interactive mode with wallet and transaction lookup"""
+        print("\n" + "="*60)
+        print("🔍 Ethereum Explorer - Wallet & Transaction Lookup")
+        print("="*60)
+        print(f"API Key: {'✅ Loaded' if self.api_key else '⚠️ Using public API'}")
+        
+        print("\n📊 Available Modes:")
+        print("  1. 👤 Wallet Address Lookup - View balance, transactions, and tokens")
+        print("  2. 📜 Transaction Hash Lookup - View transaction details")
+        print("  0. Exit")
+        
+        while True:
+            print("\n" + "-"*60)
+            choice = input("Select mode (0-2): ").strip()
+            
+            if choice == "1":
+                self.wallet_lookup_mode()
+            elif choice == "2":
+                self.transaction_lookup_mode()
+            elif choice == "0":
+                print("\n👋 Thanks for exploring Ethereum!")
+                break
+            else:
+                print("❌ Invalid choice. Please enter 0, 1, or 2")
+    
+    def wallet_lookup_mode(self):
+        """Wallet address lookup mode with repeat option"""
+        print("\n" + "="*60)
+        print("👤 Wallet Address Lookup Mode")
+        print("="*60)
+        
+        while True:
+            address = input("\n🔍 Enter wallet address (0x...) or 'back' to return: ").strip()
+            
+            if address.lower() == 'back':
+                print("Returning to main menu...")
+                break
+            
+            if not address.startswith("0x") or len(address) != 42:
+                print("❌ Invalid address format")
+                print("   Should be 42 characters starting with '0x'")
+                print("   Example: 0x742d35Cc6634C0532925a3b844Bc9e90Ee3a2A00")
+                continue
+            
+            print(f"\n📊 Analyzing wallet: {address}")
+            print("="*60)
+            
+            # Get ETH balance
+            balance_params = {
+                "module": "account",
+                "action": "balance",
+                "address": address,
+                "tag": "latest"
+            }
+            balance_data = self._make_api_call(balance_params)
+            
+            if balance_data and balance_data.get("status") == "1":
+                eth_balance = int(balance_data["result"]) / 1e18
+                print(f"💰 ETH Balance: {eth_balance:.6f} ETH")
+            else:
+                print("💰 ETH Balance: Could not retrieve")
+            
+            # Check if it's a contract
+            contract_params = {
+                "module": "contract",
+                "action": "getsourcecode",
+                "address": address
+            }
+            contract_data = self._make_api_call(contract_params)
+            
+            is_contract = False
+            if contract_data and contract_data.get("status") == "1":
+                is_contract = contract_data["result"][0].get("SourceCode") != ""
+            
+            print(f"📜 Type: {'Smart Contract' if is_contract else 'Wallet (EOA)'}")
+            
+            # Get transaction count
+            txs = self._get_transactions(address, limit=100)
+            tx_count = len(txs)
+            print(f"📊 Total Transactions: {tx_count}")
+            
+            # Show recent transactions
+            if tx_count > 0:
+                print(f"\n📝 Recent Transactions:")
+                for i, tx in enumerate(txs[:5], 1):
+                    value_eth = int(tx.get('value', '0')) / 1e18
+                    tx_type = "Sent" if tx.get('from', '').lower() == address.lower() else "Received"
+                    print(f"   {i}. {tx_type} {value_eth:.4f} ETH - Block {tx.get('blockNumber', 'N/A')}")
+            
+            # Check common token balances
+            print(f"\n💎 Token Balances:")
+            common_tokens = {
+                "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "DAI": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+                "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                "UNI": "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
+            }
+            
+            found_tokens = 0
+            for symbol, token_addr in common_tokens.items():
+                balance = self._get_token_balance(address, token_addr)
+                if balance and balance > 0:
+                    print(f"   ✅ {symbol}: {balance:,.4f}")
+                    found_tokens += 1
+            
+            if found_tokens == 0:
+                print("   No common token balances found")
+            
+            print("="*60)
+            
+            # Prompt to continue
+            continue_choice = input("\n🔁 Look up another wallet? (y/n): ").strip().lower()
+            if continue_choice != 'y':
+                print("Returning to main menu...")
+                break
+    
+    def transaction_lookup_mode(self):
+        """Transaction hash lookup mode with repeat option"""
+        print("\n" + "="*60)
+        print("📜 Transaction Hash Lookup Mode")
+        print("="*60)
+        
+        while True:
+            tx_hash = input("\n🔍 Enter transaction hash (0x...) or 'back' to return: ").strip()
+            
+            if tx_hash.lower() == 'back':
+                print("Returning to main menu...")
+                break
+            
+            if not tx_hash.startswith('0x') or len(tx_hash) != 66:
+                print("❌ Invalid transaction hash format")
+                print("   Should be 66 characters starting with '0x'")
+                print("   Example: 0x1e2910a262b1008d0616a0beb24c1a491d78771baa54a33e66065e03b1f46bc1")
+                continue
+            
+            print(f"\n📊 Analyzing transaction: {tx_hash}")
+            self._analyze_transaction(tx_hash)
+            
+            # Prompt to continue
+            continue_choice = input("\n🔁 Look up another transaction? (y/n): ").strip().lower()
+            if continue_choice != 'y':
+                print("Returning to main menu...")
+                break
+    
+    def _analyze_transaction(self, tx_hash: str):
+        """Fetch and display real transaction details from the API"""
+        params = {
+            "module": "proxy",
+            "action": "eth_getTransactionByHash",
+            "txhash": tx_hash
+        }
+        
+        data = self._make_api_call(params)
+        
+        if not data or not data.get("result"):
+            print("❌ Transaction not found or API error")
+            return
+        
+        tx = data["result"]
+        
+        # Get transaction receipt for status
+        receipt_params = {
+            "module": "proxy",
+            "action": "eth_getTransactionReceipt",
+            "txhash": tx_hash
+        }
+        receipt_data = self._make_api_call(receipt_params)
+        receipt = receipt_data.get("result") if receipt_data else None
+        
+        print("\n✅ Transaction Details:")
+        print("=" * 60)
+        
+        # Basic info
+        print(f"📍 Hash: {tx.get('hash', 'N/A')}")
+        print(f"📤 From: {tx.get('from', 'N/A')}")
+        print(f"📥 To: {tx.get('to', 'N/A') or 'Contract Creation'}")
+        
+        # Value
+        value_wei = int(tx.get('value', '0x0'), 16)
+        value_eth = value_wei / 1e18
+        print(f"💰 Value: {value_eth:.6f} ETH ({value_wei} wei)")
+        
+        # Block info
+        block_num = int(tx.get('blockNumber', '0x0'), 16) if tx.get('blockNumber') else None
+        print(f"🧱 Block: {block_num if block_num else 'Pending'}")
+        
+        # Gas details
+        gas_limit = int(tx.get('gas', '0x0'), 16)
+        gas_price_wei = int(tx.get('gasPrice', '0x0'), 16)
+        gas_price_gwei = gas_price_wei / 1e9
+        
+        print(f"⛽ Gas Limit: {gas_limit:,}")
+        print(f"⛽ Gas Price: {gas_price_gwei:.2f} Gwei")
+        
+        if receipt:
+            gas_used = int(receipt.get('gasUsed', '0x0'), 16)
+            tx_status = receipt.get('status')
+            status_text = "✅ Success" if tx_status == '0x1' else "❌ Failed"
+            
+            print(f"⛽ Gas Used: {gas_used:,}")
+            print(f"💸 Gas Cost: {(gas_used * gas_price_wei) / 1e18:.6f} ETH")
+            print(f"📊 Status: {status_text}")
+        
+        # Input data
+        input_data = tx.get('input', '0x')
+        if input_data and input_data != '0x':
+            print(f"📝 Input Data: {input_data[:66]}..." if len(input_data) > 66 else f"📝 Input Data: {input_data}")
+            if len(input_data) > 10:
+                method_id = input_data[:10]
+                print(f"   Method ID: {method_id}")
+        else:
+            print("📝 Input Data: None (simple transfer)")
+        
+        print("=" * 60)
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description="Ethereum Explorer - Wallet & Transaction Lookup",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                 # Launch interactive mode
+  %(prog)s --api-key KEY   # Override API key from .env file
+"""
+    )
+    
+    parser.add_argument("--api-key", 
+                       help="Override API key from .env file")
+    
+    args = parser.parse_args()
+    
+    # Initialize explorer
+    explorer = EthereumExplorer(api_key=args.api_key)
+    
+    # Launch interactive mode
+    explorer.start_interactive_mode()
+
+if __name__ == "__main__":
+    main()

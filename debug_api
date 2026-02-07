@@ -1,0 +1,71 @@
+"""Debug script to test Etherscan API calls"""
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+API_KEY = os.getenv("ETHERSCAN_APIKEY")
+BASE_URL = "https://api.etherscan.io/v2/api"
+
+# Test address (Vitalik's address)
+test_address = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+
+print("=" * 60)
+print("ETHERSCAN API DEBUG TEST")
+print("=" * 60)
+
+# Check API key
+print("\n1. API Key Check:")
+if API_KEY:
+    print(f"   ✅ API Key found")
+    print(f"   Length: {len(API_KEY)} characters")
+    print(f"   First 8 chars: {API_KEY[:8]}...")
+    print(f"   Type: {type(API_KEY)}")
+else:
+    print("   ❌ No API key found!")
+    exit(1)
+
+# Test the API call
+print(f"\n2. Testing API call to Etherscan:")
+print(f"   URL: {BASE_URL}")
+print(f"   Address: {test_address}")
+
+params = {
+    "module": "account",
+    "action": "balance",
+    "address": test_address,
+    "tag": "latest",
+    "apikey": API_KEY,
+    "chainid": "1"  # Ethereum Mainnet
+}
+
+print(f"\n3. Making request...")
+try:
+    response = requests.get(BASE_URL, params=params, timeout=10)
+    
+    print(f"\n4. Response:")
+    print(f"   Status code: {response.status_code}")
+    print(f"   URL called: {response.url[:100]}...")  # Don't show full URL with API key
+    
+    if response.status_code == 200:
+        data = response.json()
+        print(f"\n5. Response JSON:")
+        print(f"   Status: {data.get('status')}")
+        print(f"   Message: {data.get('message')}")
+        
+        if data.get('status') == '1':
+            balance_wei = data.get('result', '0')
+            balance_eth = int(balance_wei) / 1e18
+            print(f"   ✅ Balance found: {balance_eth:.4f} ETH")
+        else:
+            print(f"   ❌ API returned error")
+            print(f"   Full response: {data}")
+    else:
+        print(f"   ❌ HTTP Error {response.status_code}")
+        print(f"   Response text: {response.text[:200]}")
+        
+except requests.exceptions.RequestException as e:
+    print(f"   ❌ Request failed: {e}")
+
+print("\n" + "=" * 60)
